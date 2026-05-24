@@ -141,6 +141,78 @@ This setting affects **CPU time and RAM together** — higher = smarter answers 
 
 ---
 
+---
+
+### ⚠️ THE MOST IMPORTANT SETTING — `MAX_QUBITS` inside the `reason()` method
+
+This is the single biggest RAM decision in the entire project, and it is **not in the CFG block** — it is hardcoded inside the `reason()` method. Search for this line in `Qmind_v2.py`:
+
+```python
+MAX_QUBITS = 18
+```
+
+You will find it around line 1932.
+
+**Here is what this number actually controls and why it is so critical:**
+
+Every time QMind answers a question, it builds a **quantum state vector** — a list of complex numbers where each position represents one possible combination of concepts being "true" at the same time. This is the superposition state. The length of this vector is **2 raised to the power of n_qubits**.
+
+So if `MAX_QUBITS = 18`, the state vector has `2^18 = 262,144` positions.
+
+Each position holds one `complex128` number, which takes **16 bytes** of RAM.
+
+**This is how the RAM scales with MAX_QUBITS:**
+
+| MAX_QUBITS | State vector size (2^n) | RAM for state vector | Concepts processed | Minimum free RAM needed |
+|---|---|---|---|---|
+| 10 | 1,024 | ~0.016 MB | 10 concepts | ~300 MB |
+| 12 | 4,096 | ~0.064 MB | 12 concepts | ~350 MB |
+| 14 | 16,384 | ~0.26 MB | 14 concepts | ~400 MB |
+| 16 | 65,536 | ~1 MB | 16 concepts | ~600 MB |
+| **18** | **262,144** | **~4 MB** | **18 concepts** | **~800 MB** ← default |
+| 20 | 1,048,576 | ~16 MB | 20 concepts | ~4 GB |
+| 22 | 4,194,304 | ~64 MB | 22 concepts | ~8 GB |
+| 24 | 16,777,216 | ~256 MB | 24 concepts | ~16 GB |
+| 26 | 67,108,864 | ~1 GB | 26 concepts | ~32 GB |
+
+> 🚨 **This is why going above 2^20 needs 16 GB+ of RAM.** The state vector alone at `MAX_QUBITS = 24` takes 256 MB, and this is allocated **fresh every single time you ask a question.** On top of everything else the system already holds in memory (libraries, graph, episodic memory), you very quickly run out of RAM. At `MAX_QUBITS = 26`, the state vector is 1 GB — allocated and deallocated on every reasoning call.
+
+**The key thing to understand:** This is not just storage — Python allocates this entire array **during every single call to `reason()`**. So if you ask 10 questions in parallel, 10 of these arrays exist in RAM simultaneously.
+
+---
+
+**How to change it — find this block in `Qmind_v2.py`:**
+
+```python
+MAX_QUBITS = 18
+if len(all_effective_nodes) > MAX_QUBITS:
+    # Keep start_concept + highest-salience nodes
+    sal_sorted = sorted(
+        all_effective_nodes,
+        ...
+    )[:MAX_QUBITS]
+```
+
+Change only the number `18`. Always use a whole number. **Do not go above 20 unless you have 16 GB+ of free RAM.**
+
+**Recommended values by available RAM:**
+
+| Free RAM available | Set MAX_QUBITS to | State vector RAM | Reasoning quality |
+|---|---|---|---|
+| Less than 512 MB | `10` | ~0.016 MB | Basic — fewer concepts considered |
+| 512 MB – 1 GB | `14` | ~0.26 MB | Decent — good for most questions |
+| 1 GB – 2 GB | `16` | ~1 MB | Good — handles most reasoning well |
+| 2 GB – 4 GB | `18` ← default | ~4 MB | Great — full system capability |
+| 4 GB – 8 GB | `20` | ~16 MB | Excellent — very deep reasoning |
+| 8 GB – 16 GB | `22` | ~64 MB | Powerful — research-grade depth |
+| 16 GB+ | `24` | ~256 MB | Maximum — only for specialised use |
+
+**Why does more qubits = better reasoning?**
+
+Each qubit represents one concept. With 18 qubits, QMind can represent all possible combinations of up to 18 concepts being simultaneously "active" in the superposition. This means it can detect more complex interference patterns — for example, noticing that concepts A, B, and C together strongly imply D, even if no single one of them does alone. Fewer qubits means simpler, shallower combinations.
+
+---
+
 ### `embed_dim` — *The size of each concept's mathematical fingerprint (2^n)*
 
 This is the one setting that works on the **power of 2 (2^n)** principle. Every concept in QMind gets converted into a list of numbers (called an embedding vector) so the system can measure how similar two concepts are. The default is **64**, which equals 2^6.
